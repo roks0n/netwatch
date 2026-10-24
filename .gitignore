@@ -1,0 +1,11 @@
+# build artifacts
+/netwatch
+dist/
+*.db
+*.db-shm
+*.db-wal
+
+# editor/OS noise
+.idea/
+.vscode/
+.DS_Store
