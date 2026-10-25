@@ -243,11 +243,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.result != nil {
 			m.result = msg.result
 			m.status = fmt.Sprintf("Showing scan from %s  (s to scan now)", msg.result.Started)
-		} else {
-			m.status = "No scans yet — press s to scan"
+			m.rebuild()
+			return m, nil
 		}
+		// Zero-touch first run: nobody configures netwatch before its first
+		// scan, so start one straight away instead of showing an empty shell.
 		m.rebuild()
-		return m, nil
+		m.status = "No history yet — running the first scan"
+		return m, m.startScan(scan.Options{})
 
 	case historyMsg:
 		if msg.err == nil {

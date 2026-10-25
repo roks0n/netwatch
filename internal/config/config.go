@@ -27,11 +27,14 @@ var DefaultPorts = []int{
 	18080, 27017, 50001, 51413, 57621, 61613,
 }
 
-// DefaultConfig is written by `netwatch init`.
-const DefaultConfig = `# netwatch configuration
+// DefaultConfig is written by `netwatch init`. Every value shown already
+// matches the built-in default, so the file is only needed to change
+// something — the tool is fully functional with no config at all.
+const DefaultConfig = `# netwatch configuration — entirely optional.
+# Delete this file, or any section, to fall back to defaults.
 
 [network]
-cidr = "auto"          # e.g. "192.168.1.0/24"
+cidr = "auto"          # detected from the default route
 full_scan = false      # scan all 65535 TCP ports (slow)
 concurrency = 300
 connect_timeout = 0.7
@@ -45,8 +48,10 @@ tailscale = true             # inspect serve/funnel state and tailnet peers
 shodan_internetdb = true     # free, no key: ports Shodan has already seen
 max_verify_ports = 40
 check_host_interval = 1.5
-# Most reliable: any SSH host outside your network (e.g. a VPS in ~/.ssh/config).
-# The tool runs one parallel /dev/tcp probe there, so there are no API limits.
+# Optional, and the single most valuable knob: any SSH host outside your
+# network (e.g. a VPS in ~/.ssh/config). One parallel /dev/tcp probe runs
+# there, so verification has no API limits. Without it netwatch falls back
+# to check-host.net, which is rate-limited.
 remote_probe_ssh = ""
 remote_probe_timeout = 4
 cache_hours = 1
@@ -58,13 +63,15 @@ cache_hours = 6
 github_token = ""            # optional, lifts GitHub API rate limits
 include_distro_advisories = false
 
-[storage]
-db = "~/.local/share/netwatch/netwatch.db"
-reports = "~/.local/share/netwatch/reports"
+# Storage defaults to $XDG_DATA_HOME/netwatch (or ~/.local/share/netwatch).
+# [storage]
+# db = "/some/where/netwatch.db"
+# reports = "/some/where/reports"
 
-# Manual app/version overrides for services that hide their version.
+# Manual app/version overrides for services that hide their version,
+# e.g. behind a login proxy. Key is "ip:port", value is "App Version".
 [overrides]
-# "192.168.1.196:8989" = "Sonarr 4.0.12"
+# "192.0.2.10:8989" = "Sonarr 4.0.12"
 `
 
 // Network groups discovery and port-scanning settings.
@@ -117,8 +124,11 @@ type Config struct {
 	Path string `toml:"-"`
 }
 
-// Default returns the built-in configuration.
+// Default returns the built-in configuration. Nothing here requires a
+// config file: every field is a sane default for a home network, and the
+// scanner adapts to what is actually present (Tailscale, UPnP, SSH probe).
 func Default() *Config {
+	data := dataDir()
 	return &Config{
 		Network: Network{
 			CIDR:           "auto",
@@ -145,11 +155,23 @@ func Default() *Config {
 			CacheHours: 6,
 		},
 		Storage: Storage{
-			DB:      "~/.local/share/netwatch/netwatch.db",
-			Reports: "~/.local/share/netwatch/reports",
+			DB:      filepath.Join(data, "netwatch", "netwatch.db"),
+			Reports: filepath.Join(data, "netwatch", "reports"),
 		},
 		Overrides: map[string]string{},
 	}
+}
+
+// dataDir follows the XDG spec: $XDG_DATA_HOME, falling back to
+// ~/.local/share. State lives there so no config is needed on a fresh box.
+func dataDir() string {
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "share")
+	}
+	return ".netwatch"
 }
 
 // Load reads a TOML file, falling back to ~/.config/netwatch/config.toml and
@@ -161,6 +183,11 @@ func Load(path string) (*Config, error) {
 	if path != "" {
 		candidates = append(candidates, path)
 	} else {
+		if dir, err := os.UserConfigDir(); err == nil {
+			candidates = append(candidates, filepath.Join(dir, "netwatch", "config.toml"))
+		}
+		// Plain ~/.config stays a candidate even when XDG_CONFIG_HOME points
+		// elsewhere, so configs written by earlier versions keep loading.
 		if home, err := os.UserHomeDir(); err == nil {
 			candidates = append(candidates, filepath.Join(home, ".config", "netwatch", "config.toml"))
 		}
@@ -200,14 +227,16 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// WriteDefault creates the config file unless one already exists.
+// WriteDefault creates the config file unless one already exists. The file
+// is optional — netwatch runs with zero config — this is just a convenience
+// that drops in a commented template of every knob.
 func WriteDefault(path string) (string, error) {
 	if path == "" {
-		home, err := os.UserHomeDir()
+		dir, err := os.UserConfigDir()
 		if err != nil {
 			return "", err
 		}
-		path = filepath.Join(home, ".config", "netwatch", "config.toml")
+		path = filepath.Join(dir, "netwatch", "config.toml")
 	}
 	target := Expand(path)
 	if _, err := os.Stat(target); err == nil {

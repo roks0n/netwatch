@@ -7,14 +7,14 @@ import (
 
 func TestTargetPort(t *testing.T) {
 	cases := map[string]int{
-		"http://127.0.0.1:8781":            8781,
-		"https://umbrel.tailaaeff3.ts.net": 443,
-		"http://example.test/path":         80,
-		"188.230.154.243:51413":            51413,
-		"51413":                            51413,
-		"":                                 0,
-		"not-a-target":                     0,
-		"host:port":                        0,
+		"http://127.0.0.1:8781":      8781,
+		"https://nas.example.ts.net": 443,
+		"http://example.test/path":   80,
+		"203.0.113.7:51413":          51413,
+		"51413":                      51413,
+		"":                           0,
+		"not-a-target":               0,
+		"host:port":                  0,
 	}
 	for target, want := range cases {
 		if got := targetPort(target); got != want {
@@ -26,7 +26,7 @@ func TestTargetPort(t *testing.T) {
 func TestIsPublicAddr(t *testing.T) {
 	cases := map[string]bool{
 		"8.8.8.8":         true,
-		"188.230.154.243": true,
+		"203.0.113.7":     true,
 		"192.168.1.196":   false, // RFC1918
 		"10.0.0.5":        false,
 		"127.0.0.1":       false, // loopback

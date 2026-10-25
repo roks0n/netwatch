@@ -113,7 +113,15 @@ func ssdpLocations(timeout time.Duration) []string {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
-	targets := []string{"239.255.255.250", "192.168.1.1"}
+	// Multicast is the standard; unicasting the gateway too covers routers
+	// that ignore the SSDP group (e.g. UniFi UDR in its default config).
+	// Which router that is gets detected at runtime, never configured.
+	targets := []string{"239.255.255.250"}
+	if gw := config.DefaultGateway(); gw != nil {
+		targets = append(targets, gw.String())
+	} else {
+		targets = append(targets, "192.168.1.1") // last-resort common default
+	}
 	for _, target := range targets {
 		_, _ = conn.WriteTo([]byte(msg), &net.UDPAddr{IP: net.ParseIP(target), Port: 1900})
 	}

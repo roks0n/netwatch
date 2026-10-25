@@ -78,6 +78,13 @@ func (e *Engine) Scan(ctx context.Context, opts Options, progress Progress) *mod
 	result.Started = model.UTCNow()
 
 	cfg := e.Cfg
+	if opts.NoExternal && cfg.Exposure.ExternalVerify {
+		// Per-run override on a copy, so the shared config the TUI keeps
+		// using is not mutated.
+		c := *cfg
+		c.Exposure.ExternalVerify = false
+		cfg = &c
+	}
 	ports := cfg.ScanPorts()
 	if opts.Full && !cfg.Network.FullScan {
 		ports = make([]int, 65535)

@@ -14,7 +14,7 @@ It combines LAN discovery, app fingerprinting, router/Tailscale inspection, an e
 │ public IP 188.x.x.x  hosts 16  services 49  public 2  findings 0     │
 ├──────────────────────────────────────────────────────────────────────┤
 │ Target                     Kind      Verified  App        Detail     │
-│ http://127.0.0.1:8781      funnel    yes       pricedaddy Funnel: …  │
+│ http://127.0.0.1:8781      funnel    yes       dashboard  Funnel: …  │
 │ 188.x.x.x:51413            external  yes       Transmission TCP con…  │
 ├──────────────────────────────────────────────────────────────────────┤
 │ q quit · s scan · S full scan · tab/←→ switch · e export md          │
@@ -43,45 +43,60 @@ Without it, netwatch falls back to [check-host.net](https://check-host.net), whi
 
 ```bash
 go build -o netwatch ./cmd/netwatch   # no CGO needed; SQLite is pure Go
-./netwatch init                        # writes ~/.config/netwatch/config.toml
-./netwatch                             # TUI
+./netwatch                            # that's it — no config required
 ```
 
 Requires Go 1.26+ (the `go` directive pulls the right toolchain automatically). On Linux it uses `ping` and `ip neigh`; no root is needed. `CGO_ENABLED=0` builds work — the SQLite driver is `modernc.org/sqlite`.
 
-## Configure
+## Zero config by default
+
+Netwatch runs with no config file at all. On first launch it:
+
+- detects your subnet from the default route (`ip route`/`ip neigh`)
+- scans a curated list of ~80 common home-server ports
+- reads the router's UPnP table, inspects Tailscale `serve`/`funnel` if present, and checks Shodan InternetDB — all best-effort, skipped silently if absent
+- confirms what the internet can actually reach, falling back to check-host.net
+- pulls OSV advisories and GitHub releases for the apps it recognises
+- stores history under `$XDG_DATA_HOME/netwatch` (or `~/.local/share/netwatch`)
+
+The first thing you see in the TUI, with empty history, is a live first scan.
+
+## Configure (only to change something)
+
+Config is entirely optional. Drop a file at `$XDG_CONFIG_HOME/netwatch/config.toml` (or pass `--config`) and override just the keys you care about — every value has a sensible default. `netwatch init` writes a fully commented template of all of them. The most valuable single knob is the remote probe:
+
+```toml
+[exposure]
+remote_probe_ssh = "my-vps"   # any SSH host OUTSIDE your network
+```
+
+With it, netwatch runs one parallel `/dev/tcp` probe there — unlimited, and the only way to catch router forwards when UPnP is silent (UniFi). Everything else is tuning:
 
 ```toml
 [network]
-cidr = "auto"
-full_scan = false          # all 65535 TCP ports
+cidr = "auto"                  # leave alone unless the subnet is unusual
+full_scan = false              # all 65535 TCP ports (slow)
 concurrency = 300
-connect_timeout = 0.7
 
 [exposure]
 external_verify = true
 upnp = true
 tailscale = true
 shodan_internetdb = true
-remote_probe_ssh = "znc"   # any SSH alias/host with internet access
 max_verify_ports = 40
 
 [vulns]
-osv = true
-github = true
-github_token = ""          # optional; lifts GitHub rate limits
+github_token = ""              # optional; lifts GitHub rate limits
 include_distro_advisories = false
 
-[storage]
-db = "~/.local/share/netwatch/netwatch.db"
-reports = "~/.local/share/netwatch/reports"
+# storage defaults to $XDG_DATA_HOME/netwatch — rarely needs setting
 
 [overrides]
-# Apps behind an auth proxy hide their version. Supply it manually:
-"192.168.1.196:8989" = "Sonarr 4.0.12"
+# apps behind a login proxy hide their version; supply it as "ip:port" = "App Version"
+"192.0.2.10:8989" = "Sonarr 4.0.12"
 ```
 
-The config file and database are shared with earlier versions, so history carries over.
+The database is shared with earlier versions, so existing history carries over.
 
 ## Commands
 
