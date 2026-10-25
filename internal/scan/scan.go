@@ -185,6 +185,14 @@ func (e *Engine) Latest() (*model.ScanResult, error) {
 	return e.Store.Latest()
 }
 
+// Load reloads one persisted scan by run id.
+func (e *Engine) Load(runID int64) (*model.ScanResult, error) {
+	if e.Store == nil {
+		return nil, errors.New("no database configured")
+	}
+	return e.Store.Load(runID)
+}
+
 // History lists recent runs.
 func (e *Engine) History(limit int) ([]store.RunSummary, error) {
 	if e.Store == nil {

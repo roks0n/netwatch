@@ -16,8 +16,21 @@ import (
 )
 
 var severityOrder = map[string]int{
-	"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5,
+	"critical": 0, "high": 1, "medium": 2, "moderate": 2, "low": 3, "info": 4, "unknown": 5,
 }
+
+// severityRank orders a severity the way SortFindings does: lower is worse.
+// Anything unrecognised ranks after "unknown", so an odd label can never
+// impersonate the top of the list.
+func severityRank(severity string) int {
+	if r, ok := severityOrder[strings.ToLower(strings.TrimSpace(severity))]; ok {
+		return r
+	}
+	return severityOrder["unknown"] + 1
+}
+
+// SeverityRank is the exported form of the triage order used by SortFindings.
+func SeverityRank(severity string) int { return severityRank(severity) }
 
 var controlRE = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f]`)
 
@@ -57,8 +70,8 @@ func table(headers []string, rows [][]string) string {
 func SortFindings(findings []model.Finding) {
 	sort.SliceStable(findings, func(i, j int) bool {
 		a, b := findings[i], findings[j]
-		if severityOrder[strings.ToLower(a.Severity)] != severityOrder[strings.ToLower(b.Severity)] {
-			return severityOrder[strings.ToLower(a.Severity)] < severityOrder[strings.ToLower(b.Severity)]
+		if severityRank(a.Severity) != severityRank(b.Severity) {
+			return severityRank(a.Severity) < severityRank(b.Severity)
 		}
 		if a.Kind != b.Kind {
 			return a.Kind < b.Kind

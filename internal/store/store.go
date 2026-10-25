@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -252,11 +253,23 @@ func (s *Store) Latest() (*model.ScanResult, error) {
 	if runID == 0 {
 		return nil, nil
 	}
+	return s.Load(runID)
+}
+
+// Load reloads one stored scan by run id, so the TUI can browse history.
+// A missing id yields (nil, nil), matching Latest on an empty database.
+func (s *Store) Load(runID int64) (*model.ScanResult, error) {
+	if runID == 0 {
+		return nil, nil
+	}
 
 	var started string
-	var finished, publicIP, stats, errors sql.NullString
+	var finished, publicIP, stats, errCol sql.NullString
 	err := s.db.QueryRow("SELECT started, finished, public_ip, stats, errors FROM runs WHERE id=?", runID).
-		Scan(&started, &finished, &publicIP, &stats, &errors)
+		Scan(&started, &finished, &publicIP, &stats, &errCol)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // pruned away, or never existed: nothing to show, not a failure
+	}
 	if err != nil {
 		return nil, fmt.Errorf("run %d: %w", runID, err)
 	}
@@ -266,7 +279,7 @@ func (s *Store) Latest() (*model.ScanResult, error) {
 	result.Finished = finished.String
 	result.PublicIP = publicIP.String
 	_ = json.Unmarshal([]byte(orEmpty(stats.String, "{}")), &result.Stats)
-	_ = json.Unmarshal([]byte(orEmpty(errors.String, "[]")), &result.Errors)
+	_ = json.Unmarshal([]byte(orEmpty(errCol.String, "[]")), &result.Errors)
 	if raw, ok := result.Stats["diff"]; ok {
 		if encoded, err := json.Marshal(raw); err == nil {
 			var diff model.Diff

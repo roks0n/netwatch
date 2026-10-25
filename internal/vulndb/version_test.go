@@ -32,6 +32,55 @@ func TestIsNewer(t *testing.T) {
 	}
 }
 
+// The detail view distinguishes "behind", "current", and "we cannot tell".
+// Guessing the third as either of the first two is how a scanner loses
+// credibility, so Outdated reports known separately from behind.
+func TestOutdated(t *testing.T) {
+	cases := []struct {
+		installed, latest string
+		behind, known     bool
+	}{
+		{"4.1.3", "4.1.5", true, true},
+		{"4.1.5", "4.1.5", false, true},
+		{"4.2.0", "4.1.5", false, true}, // running something newer than upstream
+		{"", "4.1.5", false, false},
+		{"4.1.3", "", false, false},
+		{"nonsense", "4.1.5", false, false},
+		{"4.1.3", "nonsense", false, false},
+	}
+	for _, c := range cases {
+		behind, known := Outdated(c.installed, c.latest)
+		if behind != c.behind || known != c.known {
+			t.Errorf("Outdated(%q, %q) = %v,%v want %v,%v",
+				c.installed, c.latest, behind, known, c.behind, c.known)
+		}
+	}
+}
+
+// An advisory is only worth alarming the user about if the version they run
+// predates the fix.
+func TestAffectsInstalled(t *testing.T) {
+	cases := []struct {
+		installed, fixed string
+		affected, known  bool
+	}{
+		{"4.1.3", "4.1.4", true, true},  // fix is newer: still exposed
+		{"4.1.4", "4.1.4", false, true}, // exactly the fixed version
+		{"4.2.0", "4.1.4", false, true}, // already past the fix
+		{"9.2p1", "9.2p2", true, true},  // distro suffixes still order
+		{"", "4.1.4", false, false},
+		{"4.1.3", "", false, false},
+		{"4.1.3", "unreleased", false, false},
+	}
+	for _, c := range cases {
+		affected, known := AffectsInstalled(c.installed, c.fixed)
+		if affected != c.affected || known != c.known {
+			t.Errorf("AffectsInstalled(%q, %q) = %v,%v want %v,%v",
+				c.installed, c.fixed, affected, known, c.affected, c.known)
+		}
+	}
+}
+
 func TestExtractVersion(t *testing.T) {
 	cases := map[string]string{
 		"v4.1.3":          "4.1.3",

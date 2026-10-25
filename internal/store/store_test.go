@@ -170,6 +170,82 @@ func TestHistoryAndPrune(t *testing.T) {
 	}
 }
 
+func TestLoadPicksTheRightRun(t *testing.T) {
+	st := openTemp(t)
+
+	first := resultWith([]model.Service{
+		{IP: "192.0.2.10", Port: 8096, Proto: "tcp", App: "Jellyfin", Version: "10.9.6",
+			Reach: model.ReachLAN, Confidence: "high"},
+	}, nil)
+	first.Started = "2026-10-01T10:00:00Z"
+	firstID, err := st.Save(first)
+	if err != nil {
+		t.Fatalf("save first: %v", err)
+	}
+
+	second := resultWith([]model.Service{
+		{IP: "192.0.2.10", Port: 51413, Proto: "tcp", App: "Transmission", Version: "4.1.3",
+			Reach: model.ReachPublic, Confidence: "high",
+			Exposures: []string{"external 203.0.113.7:51413 verified"}},
+	}, []model.Finding{{Kind: "cve", App: "Transmission", Ref: "CVE-2025-1111",
+		Severity: "critical", Installed: "4.1.3", Fixed: "4.1.4"}})
+	second.Started = "2026-10-02T10:00:00Z"
+	secondID, err := st.Save(second)
+	if err != nil {
+		t.Fatalf("save second: %v", err)
+	}
+	if firstID == secondID {
+		t.Fatalf("both saves returned id %d", firstID)
+	}
+
+	// Latest is the newest; Load is whichever run you name. The TUI's history
+	// tab depends on that difference.
+	latest, err := st.Latest()
+	if err != nil {
+		t.Fatalf("latest: %v", err)
+	}
+	if latest.Started != second.Started {
+		t.Errorf("Latest returned %s, want the newer scan", latest.Started)
+	}
+
+	old, err := st.Load(firstID)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if old == nil || old.Started != first.Started {
+		t.Fatalf("Load(%d) returned %+v, want the first scan", firstID, old)
+	}
+	if len(old.Services()) != 1 || old.Services()[0].App != "Jellyfin" {
+		t.Errorf("old run services = %+v, want only Jellyfin", old.Services())
+	}
+	if len(old.Findings) != 0 {
+		t.Errorf("old run carries findings from the newer scan: %+v", old.Findings)
+	}
+
+	fresh, err := st.Load(secondID)
+	if err != nil {
+		t.Fatalf("load second: %v", err)
+	}
+	if len(fresh.Findings) != 1 || fresh.Findings[0].Ref != "CVE-2025-1111" {
+		t.Errorf("new run findings = %+v", fresh.Findings)
+	}
+	if got := fresh.Services()[0].Exposures; len(got) == 0 {
+		t.Errorf("exposure evidence lost from the reloaded run")
+	}
+
+	// An id that was pruned away is not an error: it is simply nothing.
+	missing, err := st.Load(firstID + 1000)
+	if err != nil {
+		t.Fatalf("load of a missing run: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("missing run returned %+v, want nil", missing)
+	}
+	if zero, err := st.Load(0); err != nil || zero != nil {
+		t.Errorf("Load(0) = %+v,%v want nil,nil", zero, err)
+	}
+}
+
 func TestCacheGetSet(t *testing.T) {
 	st := openTemp(t)
 	st.CacheSet("ext:203.0.113.7:22", "public")

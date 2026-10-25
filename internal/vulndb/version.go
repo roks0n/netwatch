@@ -125,6 +125,28 @@ func isNewer(latest, installed string) bool {
 	return a.gt(b)
 }
 
+// Outdated reports whether latest is a newer release than installed. known is
+// false when either side is missing or unparseable, so callers can print
+// "unknown" instead of guessing about someone's version.
+func Outdated(installed, latest string) (behind, known bool) {
+	a, b := parseVersion(latest), parseVersion(installed)
+	if !a.ok || !b.ok {
+		return false, false
+	}
+	return a.gt(b), true
+}
+
+// AffectsInstalled reports whether an advisory whose fix landed in fixed still
+// applies to the installed version — i.e. the installed version is older than
+// the fix. known is false when either version is missing or unparseable.
+func AffectsInstalled(installed, fixed string) (affected, known bool) {
+	a, b := parseVersion(fixed), parseVersion(installed)
+	if !a.ok || !b.ok {
+		return false, false
+	}
+	return a.gt(b), true
+}
+
 // versionInRange evaluates GitHub's ">= 1.0, < 1.2" style range.
 // The bool result is false when we cannot tell.
 func versionInRange(v, spec string) (hit bool, known bool) {
