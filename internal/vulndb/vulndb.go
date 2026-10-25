@@ -517,6 +517,12 @@ func RepoAdvisories(ctx context.Context, app AppInfo, version string, cfg *confi
 
 // ------------------------------------------------------------ OSV advisories
 
+// osvResponse is the api.osv.dev query result, and the shape stored in the
+// cache: what we read back must match what we wrote.
+type osvResponse struct {
+	Vulns []osvEntry `json:"vulns"`
+}
+
 // OSVAdvisories queries api.osv.dev for a package version.
 func OSVAdvisories(ctx context.Context, app AppInfo, version string, cfg *config.Config, cache Cache) []Advisory {
 	if app.OSV == "" {
@@ -527,9 +533,9 @@ func OSVAdvisories(ctx context.Context, app AppInfo, version string, cfg *config
 
 	if cache != nil {
 		if raw, ok := cache.CacheGet(key, cfg.VulnCacheTTL()); ok {
-			var cached []osvEntry
+			var cached osvResponse
 			if json.Unmarshal(raw, &cached) == nil {
-				return buildAdvisories(cached, version, cfg)
+				return buildAdvisories(cached.Vulns, version, cfg)
 			}
 		}
 	}
@@ -554,9 +560,7 @@ func OSVAdvisories(ctx context.Context, app AppInfo, version string, cfg *config
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	var response struct {
-		Vulns []osvEntry `json:"vulns"`
-	}
+	var response osvResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil
 	}
