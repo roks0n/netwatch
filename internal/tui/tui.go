@@ -82,13 +82,20 @@ type (
 var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
 	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	activeTab     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("99")).Padding(0, 1)
-	inactiveTab = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Padding(0, 1)
+	// The tab bar is drawn by hand so the selected tab can sit in a box
+	// with an open bottom — the notebook-tab look that reads as "you are
+	// inside this page".
+	activeTab = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).
+			Background(lipgloss.Color("99"))
+	inactiveTab = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	// Tabs holding something that needs attention stay readable when not
 	// selected, so the page you are on is not the only thing you can see.
-	warnTab     = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Padding(0, 1)
-	badTab      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Padding(0, 1)
+	warnTab     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	badTab      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+	tabBorder   = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	tabFaint    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	kindStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("147"))
+	helpKey     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("247"))
 	rule        = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
 	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
@@ -176,6 +183,7 @@ func newTable(cols []table.Column) table.Model {
 	// sparse row. A filled background makes the cursor obvious, which matters
 	// because enter drills into whichever row is under it.
 	st := table.DefaultStyles()
+	st.Header = st.Header.Bold(true).Foreground(lipgloss.Color("147"))
 	st.Selected = st.Selected.
 		Foreground(lipgloss.Color("230")).
 		Background(lipgloss.Color("238")).
@@ -641,7 +649,8 @@ func (m *Model) refreshDetail() {
 // line one cell too wide would wrap and shift everything below it.
 func (d *detailView) header(width int) string {
 	plain := d.kind + " · " + d.title
-	return titleStyle.Render(plain) + " " + rule.Render(strings.Repeat("─", max(0, width-lipgloss.Width(plain)-1)))
+	rendered := kindStyle.Render(d.kind) + " " + rule.Render("·") + " " + titleStyle.Render(d.title)
+	return rendered + " " + rule.Render(strings.Repeat("─", max(0, width-lipgloss.Width(plain)-1)))
 }
 
 // moveSelection steps the cursor and follows it with the drill-down, so [ and
@@ -713,7 +722,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // click maps a cell onto the tab bar or onto a row in the current table.
 func (m *Model) click(x, y int) (tea.Model, tea.Cmd) {
-	if y == m.tabRowY() {
+	if m.onTabBar(y) {
 		for _, s := range m.tabSpans {
 			if x >= s.from && x < s.to {
 				m.closeDetail()
@@ -966,48 +975,59 @@ func (m *Model) bodyHeight() int {
 
 // headerLines counts the fixed chrome above the body.
 func (m *Model) headerLines() int {
-	header := 3 // title + tab bar + summary
+	header := 4 // title + two-line tab bar + summary
 	if m.scanning {
 		header++
 	}
 	return header
 }
 
-// tabRowY is the screen row holding the tab bar, so a click there can switch
-// pages. It is fixed: the title is always the first line.
+// tabRowY is the first screen row holding the tab bar, so a click there can
+// switch pages. The bar is two lines tall; a click on either selects the tab.
+// It is fixed: the title is always the first line.
 func (m *Model) tabRowY() int { return 1 }
 
-// tabLine renders the page bar: numbered, with the number of rows on each page
-// so you can see what is where without cycling through them, and coloured when
-// a page holds something that needs attention. It also records where each
-// label landed so the mouse can hit-test it.
+// onTabBar reports whether a click landed on the tab strip.
+func (m *Model) onTabBar(y int) bool { return y == m.tabRowY() || y == m.tabRowY()+1 }
+
+// tabLine renders the page bar as a two-line strip of notebook tabs: every
+// page gets a bordered cell, and the selected one is filled so it visibly
+// connects down into the body. Tabs are numbered (the 1-6 keys), carry their
+// row count, and are coloured when a page holds something that needs
+// attention. It also records where each tab landed so the mouse can hit-test
+// either line of the tab.
 func (m *Model) tabLine() string {
 	m.tabSpans = nil
-	var b strings.Builder
+	var top, bot strings.Builder
 	x := 0
 	for i, name := range tabNames {
 		label := fmt.Sprintf("%d %s", i+1, name)
 		if n := m.tabCount(i); n > 0 {
 			label += " " + fmt.Sprint(n)
 		}
-		style := inactiveTab
-		switch {
-		case i == m.tab:
-			style = activeTab
-		case m.tabAttention(i) == attentionBad:
-			style = badTab
-		case m.tabAttention(i) == attentionWarn:
-			style = warnTab
-		}
-		width := lipgloss.Width(label) + 2 // the padding every tab style adds
+		lw := lipgloss.Width(label)
+		width := lw + 2 // the two border columns
 		if x+width > m.width {
 			break // dropping the tail beats wrapping and shifting every row below
 		}
+		if i == m.tab {
+			top.WriteString(tabBorder.Render("╭" + strings.Repeat("─", lw) + "╮"))
+			bot.WriteString(tabBorder.Render("│") + activeTab.Render(label) + tabBorder.Render("│"))
+		} else {
+			style := inactiveTab
+			switch m.tabAttention(i) {
+			case attentionBad:
+				style = badTab
+			case attentionWarn:
+				style = warnTab
+			}
+			top.WriteString(tabFaint.Render("╭" + strings.Repeat("─", lw) + "╮"))
+			bot.WriteString(tabFaint.Render("│") + style.Render(label) + tabFaint.Render("│"))
+		}
 		m.tabSpans = append(m.tabSpans, tabSpan{from: x, to: x + width, tab: i})
-		b.WriteString(style.Render(label))
 		x += width
 	}
-	return b.String()
+	return top.String() + "\n" + bot.String()
 }
 
 func (m *Model) tabCount(tab int) int {
@@ -1099,14 +1119,14 @@ func (m *Model) View() string {
 	return strings.Join([]string{
 		header,
 		m.viewBody(),
-		helpStyle.Render(clip(m.helpLine(), m.width)),
+		m.helpLine(),
 		statusStyle.Render(clip(m.status, m.width)),
 	}, "\n")
 }
 
 func (m *Model) viewHeader() string {
 	lines := []string{
-		titleStyle.Render("netwatch") + " " +
+		titleStyle.Render("● netwatch") + "  " +
 			subtitleStyle.Render("exposure · vuln tracker"),
 		m.tabLine(),
 		m.summaryLine(),
@@ -1139,28 +1159,41 @@ func (m *Model) summaryLine() string {
 		rendered string
 	}
 	add := func(label, value string, style lipgloss.Style) seg {
-		return seg{plain: label + value, rendered: subtitleStyle.Render(label) + style.Render(value)}
+		plain, rendered := label, subtitleStyle.Render(label)
+		if value != "" {
+			plain += " " + value
+			rendered += " " + style.Render(value)
+		}
+		return seg{plain: plain, rendered: rendered}
 	}
 	segs := []seg{
-		add("public IP ", orDash(r.PublicIP), publicStyle),
-		add(" hosts ", fmt.Sprint(len(r.Hosts)), okStyle),
-		add(" services ", fmt.Sprint(len(m.services)), okStyle),
-		add(" public ", fmt.Sprint(len(m.public)), publicStyle),
-		add(" findings ", fmt.Sprint(len(m.findings)), findStyle),
-		add(" tailnet ", fmt.Sprint(counts[model.ReachTailnet]), subtitleStyle),
+		add("public IP", orDash(r.PublicIP), publicStyle),
+		add("hosts", fmt.Sprint(len(r.Hosts)), okStyle),
+		add("services", fmt.Sprint(len(m.services)), okStyle),
+		add("public", fmt.Sprint(len(m.public)), publicStyle),
+		add("findings", fmt.Sprint(len(m.findings)), findStyle),
+		add("tailnet", fmt.Sprint(counts[model.ReachTailnet]), subtitleStyle),
 	}
 	if d := durationString(r); d != "" {
-		segs = append(segs, add(" in "+d+"s", "", subtitleStyle))
+		segs = append(segs, add("in "+d+"s", "", subtitleStyle))
 	}
 
 	var b strings.Builder
 	used := 0
+	sep := rule.Render(" · ")
 	for _, s := range segs {
-		if used+lipgloss.Width(s.plain) > m.width {
+		extra := 3 // the separator, once the line has content on it
+		if used == 0 {
+			extra = 0
+		}
+		if used+extra+lipgloss.Width(s.plain) > m.width {
 			break
 		}
+		if extra > 0 {
+			b.WriteString(sep)
+		}
 		b.WriteString(s.rendered)
-		used += lipgloss.Width(s.plain)
+		used += extra + lipgloss.Width(s.plain)
 	}
 	return b.String()
 }
@@ -1175,20 +1208,52 @@ func (m *Model) viewBody() string {
 	return m.tables[m.tab].View()
 }
 
-func (m *Model) helpLine() string {
+// helpHint is one "key — what it does" pair on the help line.
+type helpHint struct{ key, desc string }
+
+func (m *Model) helpHints() []helpHint {
 	if m.scanning {
-		return "esc cancel scan · progress below"
+		return []helpHint{{"esc", "cancel scan"}}
 	}
 	if m.detail != nil {
-		return "esc close details · [ ] previous/next row · j k pgup pgdn scroll · q quit"
+		return []helpHint{
+			{"esc", "close details"}, {"[ ]", "previous/next row"},
+			{"j k pgup pgdn", "scroll"}, {"q", "quit"},
+		}
 	}
-	base := "q quit · s scan · S full scan · tab/←→ or 1-6 pages · ↑↓ move · enter details · e export md · E export json"
-	switch m.tab {
-	case tabHistory:
-		return "enter open that scan · d prune (keep 50) · " + base
-	default:
-		return "r reload · " + base
+	base := []helpHint{
+		{"q", "quit"}, {"s", "scan"}, {"S", "full scan"},
+		{"tab ←→ 1-6", "pages"}, {"↑↓", "move"}, {"enter", "details"},
+		{"e", "export md"}, {"E", "export json"},
 	}
+	if m.tab == tabHistory {
+		return append([]helpHint{{"enter", "open that scan"}, {"d", "prune (keep 50)"}}, base...)
+	}
+	return append([]helpHint{{"r", "reload"}}, base...)
+}
+
+// helpLine renders the hints with the keys picked out. It is assembled by
+// plain width and stops at the edge of the screen, so styling can never make
+// the line lie about how long it is.
+func (m *Model) helpLine() string {
+	var b strings.Builder
+	used := 0
+	for i, h := range m.helpHints() {
+		plain := h.key + " " + h.desc
+		extra := 0
+		if i > 0 {
+			extra = 3
+		}
+		if used+extra+lipgloss.Width(plain) > m.width {
+			break
+		}
+		if extra > 0 {
+			b.WriteString(rule.Render(" · "))
+		}
+		b.WriteString(helpKey.Render(h.key) + " " + helpStyle.Render(h.desc))
+		used += extra + lipgloss.Width(plain)
+	}
+	return b.String()
 }
 
 func (m *Model) pct() int { return m.lastPct }

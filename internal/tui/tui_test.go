@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -71,6 +72,47 @@ func TestTabLineDropsWhatDoesNotFit(t *testing.T) {
 	}
 	if len(m.tabSpans) == 0 {
 		t.Error("the current page must always be visible")
+	}
+}
+
+// ansiRE matches SGR escape sequences, enough to read back rendered chrome.
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
+
+func TestTabBarLooksLikeTabsAndBothLinesAreClickable(t *testing.T) {
+	m := newTestModel(t)
+	bar := stripANSI(m.tabLine())
+	lines := strings.Split(bar, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("tab bar is %d lines, want 2:\n%s", len(lines), bar)
+	}
+	box := func(label string) string {
+		return "╭" + strings.Repeat("─", lipgloss.Width(label)) + "╮"
+	}
+	// Every page gets a bordered cell: corner row on top, label row below —
+	// the notebook-tab look, with the selected tab filled so it connects down.
+	for _, want := range []struct{ top, bottom string }{
+		{box("1 exposures 2"), "│1 exposures 2│"}, // the active tab
+		{box("6 report"), "│6 report│"},           // an inactive one
+	} {
+		if !strings.Contains(lines[0], want.top) {
+			t.Errorf("tab bar top row lost %q:\n%s", want.top, lines[0])
+		}
+		if !strings.Contains(lines[1], want.bottom) {
+			t.Errorf("tab bar label row lost %q:\n%s", want.bottom, lines[1])
+		}
+	}
+
+	// A click must select the tab on either line of the bar, not just the top.
+	m.View() // records the tab spans
+	for _, y := range []int{m.tabRowY(), m.tabRowY() + 1} {
+		m.tab = tabExposures
+		target := m.tabSpans[tabServices]
+		m.click(target.from, y)
+		if m.tab != tabServices {
+			t.Errorf("click at (%d,%d) selected tab %d, want %d", target.from, y, m.tab, tabServices)
+		}
 	}
 }
 
