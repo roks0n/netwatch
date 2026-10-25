@@ -35,11 +35,14 @@ func TestTabLineNamesEveryPageWithItsCount(t *testing.T) {
 	m := newTestModel(t)
 	line := m.tabLine()
 	for _, want := range []string{
-		"1 exposures 2", "2 hosts 3", "3 services 4", "4 findings 5", "5 history 2", "6 report",
+		"exposures 2", "hosts 3", "services 4", "findings 5", "history 2", "report",
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("tab bar is missing %q:\n%s", want, line)
 		}
+	}
+	if strings.Contains(line, "1 exposures") {
+		t.Errorf("tab labels should not carry numbers:\n%s", line)
 	}
 	if w := lipgloss.Width(line); w > m.width {
 		t.Errorf("tab bar is %d wide, screen is %d", w, m.width)
@@ -54,8 +57,9 @@ func TestTabLineNamesEveryPageWithItsCount(t *testing.T) {
 		if s.to <= s.from {
 			t.Errorf("span %d is empty: %d..%d", i, s.from, s.to)
 		}
-		if i > 0 && s.from != m.tabSpans[i-1].to {
-			t.Errorf("span %d starts at %d, previous ended at %d", i, s.from, m.tabSpans[i-1].to)
+		if i > 0 && s.from != m.tabSpans[i-1].to+2 {
+			t.Errorf("span %d starts at %d, previous ended at %d, want a 2-column gap",
+				i, s.from, m.tabSpans[i-1].to)
 		}
 	}
 }
@@ -80,38 +84,45 @@ var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
-func TestTabBarLooksLikeTabsAndBothLinesAreClickable(t *testing.T) {
+func TestTabBarIsBoxedAndEveryLineIsClickable(t *testing.T) {
 	m := newTestModel(t)
 	bar := stripANSI(m.tabLine())
 	lines := strings.Split(bar, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("tab bar is %d lines, want 2:\n%s", len(lines), bar)
+	if len(lines) != 3 {
+		t.Fatalf("tab bar is %d lines, want 3:\n%s", len(lines), bar)
 	}
-	box := func(label string) string {
-		return "╭" + strings.Repeat("─", lipgloss.Width(label)) + "╮"
+	box := func(label string) (string, string) {
+		w := lipgloss.Width(label) + 2 // one column of padding on each side
+		return "╭" + strings.Repeat("─", w) + "╮", "╰" + strings.Repeat("─", w) + "╯"
 	}
-	// Every page gets a bordered cell: corner row on top, label row below —
-	// the notebook-tab look, with the selected tab filled so it connects down.
-	for _, want := range []struct{ top, bottom string }{
-		{box("1 exposures 2"), "│1 exposures 2│"}, // the active tab
-		{box("6 report"), "│6 report│"},           // an inactive one
-	} {
-		if !strings.Contains(lines[0], want.top) {
-			t.Errorf("tab bar top row lost %q:\n%s", want.top, lines[0])
+	// Every tab is a complete box with padding: a top border, a spaced label,
+	// and a bottom border — the count rides along as a number, not a fill.
+	for _, label := range []string{"exposures 2", "report"} { // active, inactive
+		top, bottom := box(label)
+		if !strings.Contains(lines[0], top) {
+			t.Errorf("tab bar top row lost %q:\n%s", top, lines[0])
 		}
-		if !strings.Contains(lines[1], want.bottom) {
-			t.Errorf("tab bar label row lost %q:\n%s", want.bottom, lines[1])
+		if !strings.Contains(lines[1], "│ "+label+" │") {
+			t.Errorf("tab bar label row lost the padding around %q:\n%s", label, lines[1])
+		}
+		if !strings.Contains(lines[2], bottom) {
+			t.Errorf("tab bar bottom row lost %q:\n%s", bottom, lines[2])
 		}
 	}
 
-	// A click must select the tab on either line of the bar, not just the top.
+	// A click must select the tab on any of the bar's three lines, and a
+	// click in the gap between tabs must select nothing.
 	m.View() // records the tab spans
-	for _, y := range []int{m.tabRowY(), m.tabRowY() + 1} {
+	for _, y := range []int{m.tabRowY(), m.tabRowY() + 1, m.tabRowY() + 2} {
 		m.tab = tabExposures
 		target := m.tabSpans[tabServices]
 		m.click(target.from, y)
 		if m.tab != tabServices {
 			t.Errorf("click at (%d,%d) selected tab %d, want %d", target.from, y, m.tab, tabServices)
+		}
+		m.click(target.to+1, y) // the gap after the tab
+		if m.tab != tabServices {
+			t.Errorf("click in the gap at (%d,%d) moved to tab %d", target.to+1, y, m.tab)
 		}
 	}
 }
@@ -182,7 +193,7 @@ func TestNarrowScreenStillHasAUsableBody(t *testing.T) {
 func TestHeadingsAndHelpMentionTheNewAffordances(t *testing.T) {
 	m := newTestModel(t)
 	m.tab = tabServices
-	if !strings.Contains(m.View(), "1 exposures") {
+	if !strings.Contains(m.View(), "exposures") {
 		t.Error("the tab bar must be on screen, not behind a keypress")
 	}
 	if !strings.Contains(m.helpLine(), "enter") {

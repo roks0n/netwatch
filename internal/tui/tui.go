@@ -82,18 +82,22 @@ type (
 var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
 	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	// The tab bar is drawn by hand so the selected tab can sit in a box
-	// with an open bottom — the notebook-tab look that reads as "you are
-	// inside this page".
-	activeTab = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("99"))
-	inactiveTab = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	// Tabs holding something that needs attention stay readable when not
-	// selected, so the page you are on is not the only thing you can see.
-	warnTab     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	badTab      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
-	tabBorder   = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
-	tabFaint    = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	// The tab bar is drawn by hand as three-line boxes: padding inside each
+	// tab, a gap between tabs, and a full border all the way around. The
+	// selected page is picked out by a lit border and a bold label; only the
+	// count carries colour, so a page holding trouble stays visible from
+	// any other page without painting the whole tab.
+	activeTab     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230"))
+	inactiveTab   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	warnTab       = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	badTab        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+	tabBorder     = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	tabFaint      = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	activeCount   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
+	inactiveCount = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	// bandStyle sits under the summary so the header reads as one block,
+	// clearly separated from the body below the tab boxes.
+	bandStyle   = lipgloss.NewStyle().Background(lipgloss.Color("235"))
 	kindStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("147"))
 	helpKey     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("247"))
 	rule        = lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
@@ -975,7 +979,7 @@ func (m *Model) bodyHeight() int {
 
 // headerLines counts the fixed chrome above the body.
 func (m *Model) headerLines() int {
-	header := 4 // title + two-line tab bar + summary
+	header := 5 // title + three-line tab bar + summary
 	if m.scanning {
 		header++
 	}
@@ -983,51 +987,65 @@ func (m *Model) headerLines() int {
 }
 
 // tabRowY is the first screen row holding the tab bar, so a click there can
-// switch pages. The bar is two lines tall; a click on either selects the tab.
-// It is fixed: the title is always the first line.
+// switch pages. The bar is three lines tall; a click on any of them selects
+// the tab. It is fixed: the title is always the first line.
 func (m *Model) tabRowY() int { return 1 }
 
 // onTabBar reports whether a click landed on the tab strip.
-func (m *Model) onTabBar(y int) bool { return y == m.tabRowY() || y == m.tabRowY()+1 }
+func (m *Model) onTabBar(y int) bool {
+	return y >= m.tabRowY() && y <= m.tabRowY()+2
+}
 
-// tabLine renders the page bar as a two-line strip of notebook tabs: every
-// page gets a bordered cell, and the selected one is filled so it visibly
-// connects down into the body. Tabs are numbered (the 1-6 keys), carry their
-// row count, and are coloured when a page holds something that needs
-// attention. It also records where each tab landed so the mouse can hit-test
-// either line of the tab.
+// tabLine renders the page bar as a three-line strip of complete boxes. Each
+// tab is padded, tabs are separated by a gap, and the label carries just the
+// page name plus its row count — the count is the only coloured part, so a
+// page holding trouble is obvious from any other page. The selected page is
+// picked out by a lit border and a bold label. It also records where each tab
+// landed so the mouse can hit-test any line of the tab.
 func (m *Model) tabLine() string {
 	m.tabSpans = nil
-	var top, bot strings.Builder
+	var top, mid, bot strings.Builder
 	x := 0
 	for i, name := range tabNames {
-		label := fmt.Sprintf("%d %s", i+1, name)
-		if n := m.tabCount(i); n > 0 {
-			label += " " + fmt.Sprint(n)
+		n := m.tabCount(i)
+		cw := lipgloss.Width(name) + 2 // one column of padding on each side
+		if n > 0 {
+			cw += 1 + len(fmt.Sprint(n))
 		}
-		lw := lipgloss.Width(label)
-		width := lw + 2 // the two border columns
+		width := cw + 2 // the two border columns
 		if x+width > m.width {
 			break // dropping the tail beats wrapping and shifting every row below
 		}
+		border, label := tabFaint, inactiveTab
+		countStyle := inactiveCount
 		if i == m.tab {
-			top.WriteString(tabBorder.Render("╭" + strings.Repeat("─", lw) + "╮"))
-			bot.WriteString(tabBorder.Render("│") + activeTab.Render(label) + tabBorder.Render("│"))
-		} else {
-			style := inactiveTab
-			switch m.tabAttention(i) {
-			case attentionBad:
-				style = badTab
-			case attentionWarn:
-				style = warnTab
-			}
-			top.WriteString(tabFaint.Render("╭" + strings.Repeat("─", lw) + "╮"))
-			bot.WriteString(tabFaint.Render("│") + style.Render(label) + tabFaint.Render("│"))
+			border, label = tabBorder, activeTab
+			countStyle = activeCount
 		}
+		switch m.tabAttention(i) {
+		case attentionBad:
+			countStyle = badTab
+		case attentionWarn:
+			countStyle = warnTab
+		}
+		cell := " " + label.Render(name)
+		if n > 0 {
+			cell += " " + countStyle.Render(fmt.Sprint(n))
+		}
+		cell += " "
+		top.WriteString(border.Render("╭" + strings.Repeat("─", cw) + "╮"))
+		mid.WriteString(border.Render("│") + cell + border.Render("│"))
+		bot.WriteString(border.Render("╰" + strings.Repeat("─", cw) + "╯"))
 		m.tabSpans = append(m.tabSpans, tabSpan{from: x, to: x + width, tab: i})
 		x += width
+		if x+2 <= m.width {
+			top.WriteString("  ") // the gap; a click in it selects nothing
+			mid.WriteString("  ")
+			bot.WriteString("  ")
+			x += 2
+		}
 	}
-	return top.String() + "\n" + bot.String()
+	return top.String() + "\n" + mid.String() + "\n" + bot.String()
 }
 
 func (m *Model) tabCount(tab int) int {
@@ -1126,10 +1144,12 @@ func (m *Model) View() string {
 
 func (m *Model) viewHeader() string {
 	lines := []string{
-		titleStyle.Render("● netwatch") + "  " +
+		titleStyle.Render("● netwatch") + "   " +
 			subtitleStyle.Render("exposure · vuln tracker"),
 		m.tabLine(),
-		m.summaryLine(),
+		// The band spans the screen so the header block ends on an edge you
+		// can see, instead of the counts just stopping somewhere.
+		bandStyle.Width(m.width).Render(m.summaryLine()),
 	}
 	if m.scanning {
 		lines = append(lines, m.bar.ViewAs(float64(m.pct())/100.0))
@@ -1180,9 +1200,9 @@ func (m *Model) summaryLine() string {
 
 	var b strings.Builder
 	used := 0
-	sep := rule.Render(" · ")
+	sep := rule.Render("  ·  ")
 	for _, s := range segs {
-		extra := 3 // the separator, once the line has content on it
+		extra := 5 // the separator, once the line has content on it
 		if used == 0 {
 			extra = 0
 		}
