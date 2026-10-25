@@ -222,13 +222,19 @@ var upstreamEcosystems = []string{
 }
 
 // affectedBy reports whether an installed version is in the vulnerable set.
-// The second result is false when the record says nothing about upstream.
+// The second result is false when the record says nothing about versions at
+// all. A record whose only version data lives in distro ecosystems (Alpine's
+// "10.1_p1-r0", Ubuntu's epoch-suffixed debs) says nothing about the software
+// we scanned — those vendors' backports are not our vulnerability state — so
+// it counts as known-and-not-hit and gets dropped instead of filed as unknown.
 func affectedBy(v osvEntry, version string, includeDistro bool) (hit bool, known bool) {
 	any := false
+	distroOnly := false
 	results := []bool{}
 	for _, aff := range v.Affected {
 		eco := strings.ToLower(strings.TrimSpace(aff.Package.Ecosystem))
 		if !includeDistro && eco != "" && !slices.Contains(upstreamEcosystems, eco) {
+			distroOnly = true
 			continue
 		}
 		if len(aff.Versions) > 0 {
@@ -252,7 +258,7 @@ func affectedBy(v osvEntry, version string, includeDistro bool) (hit bool, known
 		}
 	}
 	if !any {
-		return false, false
+		return false, distroOnly
 	}
 	return slices.Contains(results, true), true
 }
